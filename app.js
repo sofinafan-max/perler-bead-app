@@ -665,10 +665,19 @@ function renderPattern(pattern) {
 function exportPattern() {
   if (!currentPattern) return;
   const { grid, pixels, summary, gridW, gridH } = currentPattern;
-  const cellSize = 28, padding = 20, cols = 4;
+  // Dynamic cellSize: short edge of grid area >= 1280px
+  const minEdge = Math.min(gridW, gridH);
+  const cellSize = Math.max(28, Math.ceil(1280 / minEdge));
+  const fontSize = Math.max(9, Math.round(cellSize * 0.35));
+  const padding = Math.round(cellSize * 0.7);
+  const cols = 4;
   const summaryRows = Math.ceil(summary.length / cols);
+  const summaryFontSize = Math.max(11, Math.round(cellSize * 0.5));
+  const titleFontSize = Math.max(14, Math.round(cellSize * 0.6));
+  const swatchSize = Math.max(16, Math.round(cellSize * 0.55));
+  const rowHeight = Math.max(32, Math.round(cellSize * 1.1));
   const canvasW = gridW * cellSize + padding * 2;
-  const canvasH = gridH * cellSize + padding * 2 + summaryRows * 32 + 60;
+  const canvasH = gridH * cellSize + padding * 2 + summaryRows * rowHeight + padding * 3;
   const canvas = document.createElement('canvas');
   canvas.width = canvasW; canvas.height = canvasH;
   const ctx = canvas.getContext('2d');
@@ -691,21 +700,21 @@ function exportPattern() {
       } else {
         ctx.fillStyle = textColorFor(c.hex);
       }
-      ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = `bold ${fontSize}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(c.code, px + cellSize / 2, py + cellSize / 2);
     }
   }
-  const sy = padding + gridH * cellSize + 20;
-  ctx.fillStyle = '#333'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'left';
+  const sy = padding + gridH * cellSize + padding;
+  ctx.fillStyle = '#333'; ctx.font = `bold ${titleFontSize}px sans-serif`; ctx.textAlign = 'left';
   ctx.fillText('颜色用量（共' + summary.reduce((s, c) => s + c.count, 0) + '颗）', padding, sy);
   const colW = (canvasW - padding * 2) / cols;
   summary.forEach((c, i) => {
     const col = i % cols, row = Math.floor(i / cols);
-    const cx = padding + col * colW, cy = sy + 20 + row * 32;
-    ctx.fillStyle = c.hex; ctx.fillRect(cx, cy, 16, 16);
-    ctx.strokeStyle = '#ccc'; ctx.strokeRect(cx, cy, 16, 16);
-    ctx.fillStyle = '#333'; ctx.font = '11px sans-serif';
-    ctx.fillText(`${c.code} ${c.name}: ${c.count}颗`, cx + 22, cy + 12);
+    const cx = padding + col * colW, cy = sy + padding + row * rowHeight;
+    ctx.fillStyle = c.hex; ctx.fillRect(cx, cy, swatchSize, swatchSize);
+    ctx.strokeStyle = '#ccc'; ctx.strokeRect(cx, cy, swatchSize, swatchSize);
+    ctx.fillStyle = '#333'; ctx.font = `${summaryFontSize}px sans-serif`;
+    ctx.fillText(`${c.code} ${c.name}: ${c.count}颗`, cx + swatchSize + 6, cy + swatchSize * 0.75);
   });
   canvas.toBlob(blob => {
     const url = URL.createObjectURL(blob);
