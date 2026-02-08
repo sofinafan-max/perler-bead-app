@@ -52,6 +52,10 @@ function textColorFor(hex) {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5 ? '#000' : '#fff';
 }
 
+function textColorForRgb(r, g, b) {
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5 ? '#000' : '#fff';
+}
+
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
 function formatDate(ts) {
@@ -233,7 +237,7 @@ function imageToPattern(img, gridW, gridH, params) {
     .map(([code, count]) => ({ ...PERLER_COLORS.find(c => c.code === code), count }))
     .sort((a, b) => b.count - a.count);
 
-  return { grid, summary, gridW, gridH, overallSimilarity, edgeOverlap, params };
+  return { grid, pixels, summary, gridW, gridH, overallSimilarity, edgeOverlap, params };
 }
 
 // ========== Variant Generation ==========
@@ -376,14 +380,19 @@ function generateVariants(img, gridW, gridH) {
 
 // ========== Variant Thumbnail ==========
 function patternToThumbnail(pattern) {
-  const { grid, gridW, gridH } = pattern;
+  const { grid, pixels, gridW, gridH } = pattern;
   const cellSize = 4;
   const canvas = document.createElement('canvas');
   canvas.width = gridW * cellSize; canvas.height = gridH * cellSize;
   const ctx = canvas.getContext('2d');
   for (let y = 0; y < gridH; y++) {
     for (let x = 0; x < gridW; x++) {
-      ctx.fillStyle = grid[y][x].hex;
+      if (pixels && pixels[y] && pixels[y][x]) {
+        const p = pixels[y][x];
+        ctx.fillStyle = `rgb(${Math.round(p.r)},${Math.round(p.g)},${Math.round(p.b)})`;
+      } else {
+        ctx.fillStyle = grid[y][x].hex;
+      }
       ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
     }
   }
@@ -496,7 +505,7 @@ function submitScores() {
 
 // ========== Render Single Pattern ==========
 function renderPattern(pattern) {
-  const { grid, summary, gridW, gridH, overallSimilarity, edgeOverlap, params } = pattern;
+  const { grid, pixels, summary, gridW, gridH, overallSimilarity, edgeOverlap, params } = pattern;
   let html = '';
   if (overallSimilarity !== undefined) {
     const simPct = overallSimilarity.toFixed(1);
@@ -515,8 +524,16 @@ function renderPattern(pattern) {
   for (let y = 0; y < gridH; y++) {
     for (let x = 0; x < gridW; x++) {
       const c = grid[y][x];
-      const tc = textColorFor(c.hex);
-      html += `<div class="pattern-cell" style="background:${c.hex};color:${tc}" title="${c.name}(${c.code})">${c.code}</div>`;
+      let bgColor, tc;
+      if (pixels && pixels[y] && pixels[y][x]) {
+        const p = pixels[y][x];
+        bgColor = `rgb(${Math.round(p.r)},${Math.round(p.g)},${Math.round(p.b)})`;
+        tc = textColorForRgb(p.r, p.g, p.b);
+      } else {
+        bgColor = c.hex;
+        tc = textColorFor(c.hex);
+      }
+      html += `<div class="pattern-cell" style="background:${bgColor};color:${tc}" title="${c.name}(${c.code})">${c.code}</div>`;
     }
   }
   html += '</div></div>';
@@ -532,7 +549,7 @@ function renderPattern(pattern) {
 // ========== Export Pattern as PNG ==========
 function exportPattern() {
   if (!currentPattern) return;
-  const { grid, summary, gridW, gridH } = currentPattern;
+  const { grid, pixels, summary, gridW, gridH } = currentPattern;
   const cellSize = 28, padding = 20, cols = 4;
   const summaryRows = Math.ceil(summary.length / cols);
   const canvasW = gridW * cellSize + padding * 2;
@@ -545,9 +562,20 @@ function exportPattern() {
     for (let x = 0; x < gridW; x++) {
       const c = grid[y][x];
       const px = padding + x * cellSize, py = padding + y * cellSize;
-      ctx.fillStyle = c.hex; ctx.fillRect(px, py, cellSize, cellSize);
+      if (pixels && pixels[y] && pixels[y][x]) {
+        const p = pixels[y][x];
+        ctx.fillStyle = `rgb(${Math.round(p.r)},${Math.round(p.g)},${Math.round(p.b)})`;
+      } else {
+        ctx.fillStyle = c.hex;
+      }
+      ctx.fillRect(px, py, cellSize, cellSize);
       ctx.strokeStyle = 'rgba(0,0,0,0.15)'; ctx.strokeRect(px, py, cellSize, cellSize);
-      ctx.fillStyle = textColorFor(c.hex);
+      if (pixels && pixels[y] && pixels[y][x]) {
+        const p = pixels[y][x];
+        ctx.fillStyle = textColorForRgb(p.r, p.g, p.b);
+      } else {
+        ctx.fillStyle = textColorFor(c.hex);
+      }
       ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(c.code, px + cellSize / 2, py + cellSize / 2);
     }
@@ -572,18 +600,56 @@ function exportPattern() {
   });
 }
 
+// ========== Fly to History Animation ==========
+function flyToHistoryAnimation(thumbnailSrc) {
+  const saveBtn = document.querySelector('.result-actions .btn-primary');
+  const historyTab = document.querySelector('[data-tab="tab-history"]');
+  if (!saveBtn || !historyTab) return;
+
+  const startRect = saveBtn.getBoundingClientRect();
+  const endRect = historyTab.getBoundingClientRect();
+
+  const img = document.createElement('img');
+  img.src = thumbnailSrc;
+  img.className = 'fly-thumbnail';
+  img.style.left = startRect.left + 'px';
+  img.style.top = startRect.top + 'px';
+  img.style.width = '60px';
+  img.style.height = 'auto';
+  document.body.appendChild(img);
+
+  const dx = endRect.left + endRect.width / 2 - startRect.left - 30;
+  const dy = endRect.top + endRect.height / 2 - startRect.top - 30;
+
+  img.animate([
+    { transform: 'translate(0, 0) scale(1)', opacity: 1 },
+    { transform: `translate(${dx * 0.5}px, ${dy * 0.3 - 80}px) scale(0.6)`, opacity: 0.8, offset: 0.4 },
+    { transform: `translate(${dx}px, ${dy}px) scale(0.15)`, opacity: 0.3 }
+  ], {
+    duration: 700,
+    easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+    fill: 'forwards'
+  }).onfinish = () => {
+    img.remove();
+    historyTab.classList.add('pulse');
+    setTimeout(() => historyTab.classList.remove('pulse'), 600);
+  };
+}
+
 // ========== Save to History ==========
 function saveToHistory() {
   if (!currentPattern) return;
   const thumb = patternToThumbnail(currentPattern);
+  // 保存时去掉 pixels 数据以节省 localStorage 空间
+  const { pixels, ...patternWithoutPixels } = currentPattern;
   const item = {
     id: generateId(), timestamp: Date.now(),
     title: '拼豆图纸 ' + formatDate(Date.now()),
-    thumbnail: thumb, pattern: currentPattern,
+    thumbnail: thumb, pattern: patternWithoutPixels,
     sourceImage: currentImageDataUrl
   };
   const list = getHistory(); list.unshift(item); saveHistory(list);
-  alert('已保存到历史记录！');
+  flyToHistoryAnimation(thumb);
   renderHistoryList();
 }
 

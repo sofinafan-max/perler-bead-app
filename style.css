@@ -71,7 +71,15 @@ body {
   transition: color 0.3s;
 }
 .tab-btn.active { color: var(--primary); }
+.tab-btn.pulse { animation: tabPulse 0.6s ease; }
+@keyframes tabPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.2); } }
 .tab-btn svg { width: 24px; height: 24px; }
+
+/* ========== Fly Thumbnail Animation ========== */
+.fly-thumbnail {
+  position: fixed; z-index: 999; pointer-events: none;
+  border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+}
 
 /* ========== Buttons ========== */
 .btn-primary {
