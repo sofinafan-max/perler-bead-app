@@ -16,8 +16,8 @@
     <main class="tab-content">
       <!-- Tab 1: Generate -->
       <section id="tab-generate" class="tab-panel active">
-        <!-- Two-column workspace -->
-        <div class="generate-workspace">
+        <!-- Row 1: Upload + Preview -->
+        <div class="workspace-top">
           <!-- LEFT: Upload + Controls -->
           <div class="workspace-left">
             <div id="upload-area" class="upload-area">
@@ -42,36 +42,37 @@
                   <input type="number" id="max-edge" value="58" min="10" max="200" class="input-number">
                 </label>
                 <label class="range-label">平滑：<input type="range" id="denoise-level" min="0" max="100" value="0" class="input-range"><span id="denoise-value">0</span></label>
-                <button id="btn-preview-resize" class="btn-primary btn-sm">压缩预览</button>
-                <button id="btn-reupload" class="btn-primary btn-sm">重新上传</button>
+              </div>
+              <div class="controls-row" style="margin-top:10px;">
+                <button id="btn-generate" class="btn-primary btn-sm">生成图纸</button>
+                <button id="btn-reupload" class="btn-secondary btn-sm">清空</button>
               </div>
             </div>
           </div>
 
-          <!-- RIGHT: Compressed preview + Confirm -->
+          <!-- RIGHT: Selected variant large preview -->
           <div class="workspace-right">
             <div id="right-empty-state" class="right-empty-state">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#AEAEB2" stroke-width="1">
                 <rect x="2" y="2" width="20" height="20" rx="3"/>
                 <circle cx="8" cy="8" r="2"/><path d="m22 16-5-5L6 22"/>
               </svg>
-              <p>压缩预览将显示在这里</p>
+              <p>生成结果将显示在这里</p>
             </div>
-            <div id="resize-preview" class="resize-preview-panel hidden">
-              <canvas id="resize-canvas"></canvas>
-              <div id="resize-info" class="img-info"></div>
-              <div class="resize-actions">
-                <button id="btn-confirm-resize" class="btn-primary">生成图纸</button>
-              </div>
+            <div id="selected-variant-preview" class="selected-variant-preview hidden">
+              <img id="preview-variant-img" alt="效果图预览">
+              <div class="preview-click-hint">点击查看大图</div>
             </div>
           </div>
         </div>
+
+        <!-- Row 2: 5 variant cards -->
+        <div id="variant-strip" class="variant-strip hidden"></div>
 
         <div id="loading" class="loading hidden">
           <div class="spinner"></div>
           <p id="loading-text">预处理图片中...</p>
         </div>
-        <div id="result-area" class="result-area hidden"></div>
       </section>
 
       <!-- Tab 2: History -->
@@ -137,6 +138,26 @@
         <button id="modal-close" class="modal-close">&times;</button>
       </div>
       <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Pattern Modal (pixel grid viewer with pinch-zoom) -->
+  <div id="pattern-modal" class="pattern-modal hidden">
+    <div class="pattern-modal-content">
+      <div class="pattern-modal-header">
+        <h3 id="pattern-modal-title">图纸详情</h3>
+        <div class="pattern-modal-actions">
+          <button id="pattern-modal-save" class="btn-primary btn-sm">保存到历史</button>
+          <button id="pattern-modal-export" class="btn-primary btn-sm" style="background:#27ae60">导出图片</button>
+          <button id="pattern-modal-close" class="modal-close">&times;</button>
+        </div>
+      </div>
+      <div class="pattern-modal-body">
+        <div id="pinch-zoom-container" class="pinch-zoom-container">
+          <div id="pattern-modal-grid"></div>
+        </div>
+      </div>
+      <div id="pattern-modal-summary" class="pattern-modal-summary"></div>
     </div>
   </div>
 

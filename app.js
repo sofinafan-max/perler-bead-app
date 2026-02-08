@@ -491,63 +491,55 @@ function patternToThumbnail(pattern) {
   return canvas.toDataURL('image/png');
 }
 
-// ========== Render Variant Grid ==========
-function renderVariantGrid(variants) {
+// ========== Render Variant Strip (5 cards) ==========
+function renderVariantStrip(variants) {
   const ranked = variants
     .map(v => ({ ...v, weightedScore: v.pattern.overallSimilarity * 0.55 + v.pattern.edgeOverlap * 0.45 }))
     .sort((a, b) => b.weightedScore - a.weightedScore)
     .slice(0, 4);
 
-  let html = `<div class="preprocess-info">压缩后尺寸：${resizedGridW}×${resizedGridH} 像素，已从10种方案中选出最优4种。</div>`;
-  html += '<div class="variant-grid">';
+  // Store ranked variants for selection
+  currentRankedVariants = ranked;
 
-  // 第1张：压缩原图直接匹配
+  const strip = document.getElementById('variant-strip');
+  let html = '';
+
+  // Card 1: direct pattern
   if (currentDirectPattern) {
     const directThumb = patternToThumbnail(currentDirectPattern);
-    html += `<div class="variant-card" id="variant-direct">`;
-    html += `<div class="variant-img-wrap" onclick="selectVariant('direct')">`;
+    html += `<div class="strip-card selected" data-variant-id="direct">`;
     html += `<img src="${directThumb}" alt="原图对照">`;
-    html += `<div class="variant-overlay"><button class="variant-overlay-btn">就选这个</button></div>`;
+    html += `<div class="strip-card-label">原图对照</div>`;
     html += `</div>`;
-    html += `<div class="variant-info">`;
-    html += `<div class="variant-metrics">`;
-    html += `<div class="variant-metric" style="flex:1">原图对照<strong>直接匹配</strong></div>`;
-    html += `</div>`;
-    html += `</div></div>`;
   }
 
-  // 后4张：优化方案
+  // Cards 2-5: ranked variants
   for (let rank = 0; rank < ranked.length; rank++) {
     const v = ranked[rank];
-    const sim = v.pattern.overallSimilarity.toFixed(1);
-    const edge = v.pattern.edgeOverlap.toFixed(1);
-    html += `<div class="variant-card" id="variant-${v.id}">`;
-    html += `<div class="variant-img-wrap" onclick="selectVariant(${v.id})">`;
+    const sim = v.pattern.overallSimilarity.toFixed(0);
+    html += `<div class="strip-card" data-variant-id="${v.id}">`;
     html += `<img src="${v.thumbnail}" alt="方案${rank + 1}">`;
-    html += `<div class="variant-overlay"><button class="variant-overlay-btn">就选这个</button></div>`;
+    html += `<div class="strip-card-label">方案${rank + 1} (${sim}%)</div>`;
     html += `</div>`;
-    html += `<div class="variant-info">`;
-    html += `<div class="variant-metrics">`;
-    html += `<div class="variant-metric">相似度<strong>${sim}%</strong></div>`;
-    html += `<div class="variant-metric">轮廓相似度<strong>${edge}%</strong></div>`;
-    html += `</div>`;
-    html += `</div></div>`;
   }
-  html += '</div>';
-  html += '<div id="selected-preview-area"></div>';
-  return html;
+
+  strip.innerHTML = html;
+  strip.classList.remove('hidden');
+
+  // Bind click events
+  strip.querySelectorAll('.strip-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const id = card.dataset.variantId;
+      selectVariant(id === 'direct' ? 'direct' : parseInt(id));
+    });
+  });
+
+  // Default select first (direct)
+  selectVariant('direct');
 }
 
 // ========== Variant Interactions ==========
-function viewVariant(id) {
-  const v = currentVariants[id];
-  if (!v) return;
-  currentPattern = v.pattern;
-  const modal = document.getElementById('modal');
-  document.getElementById('modal-title').textContent = `方案 #${id + 1} ${v.params.label || ''}`;
-  document.getElementById('modal-body').innerHTML = renderPattern(v.pattern);
-  modal.classList.remove('hidden');
-}
+let currentRankedVariants = [];
 
 function selectVariant(id) {
   let pattern, title;
@@ -562,60 +554,152 @@ function selectVariant(id) {
     title = `方案 #${id + 1} ${v.params.label || ''}`;
   }
   currentPattern = pattern;
-  // Highlight selected card
-  document.querySelectorAll('.variant-card').forEach(c => c.classList.remove('selected'));
-  document.getElementById(`variant-${id}`).classList.add('selected');
-  // Show inline preview below grid
-  const container = document.getElementById('selected-preview-area');
-  let html = '<div class="selected-preview">';
-  html += '<div class="selected-preview-header">';
-  html += `<h3>${title}</h3>`;
-  html += '<button class="selected-preview-close" onclick="closeSelectedPreview()">&times;</button>';
-  html += '</div>';
-  html += renderPattern(pattern);
-  html += '</div>';
-  container.innerHTML = html;
-  container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  currentPatternTitle = title;
+
+  // Highlight selected card in strip
+  document.querySelectorAll('.strip-card').forEach(c => c.classList.remove('selected'));
+  const card = document.querySelector(`.strip-card[data-variant-id="${id}"]`);
+  if (card) card.classList.add('selected');
+
+  // Update right-top large preview
+  const previewContainer = document.getElementById('selected-variant-preview');
+  const previewImg = document.getElementById('preview-variant-img');
+  const rightEmpty = document.getElementById('right-empty-state');
+  const thumb = patternToThumbnail(pattern);
+  previewImg.src = thumb;
+  previewContainer.classList.remove('hidden');
+  rightEmpty.classList.add('hidden');
 }
 
-function closeSelectedPreview() {
-  const container = document.getElementById('selected-preview-area');
-  if (container) container.innerHTML = '';
-  document.querySelectorAll('.variant-card').forEach(c => c.classList.remove('selected'));
-}
+let currentPatternTitle = '';
 
-function submitScores() {
-  const history = getScoringHistory();
-  let hasScore = false;
-  for (const v of currentVariants) {
-    const input = document.getElementById(`score-${v.id}`);
-    const val = input.value.trim();
-    if (val === '') continue;
-    const score = parseInt(val);
-    if (score >= 0 && score <= 10) {
-      history.push({ params: v.params, score, timestamp: Date.now() });
-      hasScore = true;
+// ========== Pattern Modal (pixel grid viewer) ==========
+function openPatternModal() {
+  if (!currentPattern) return;
+  const modal = document.getElementById('pattern-modal');
+  const titleEl = document.getElementById('pattern-modal-title');
+  const gridContainer = document.getElementById('pattern-modal-grid');
+  const summaryContainer = document.getElementById('pattern-modal-summary');
+
+  titleEl.textContent = currentPatternTitle || '图纸详情';
+
+  const { grid, pixels, summary, gridW, gridH } = currentPattern;
+
+  // Calculate cell size to fit in viewport without scrolling
+  const modalBody = document.querySelector('.pattern-modal-body');
+  // Use approximate available space (95vw - padding, 92vh - header - summary - padding)
+  const availW = window.innerWidth * 0.95 - 48;
+  const availH = window.innerHeight * 0.92 - 60 - 140 - 48;
+  const cellSize = Math.max(8, Math.min(
+    Math.floor(availW / gridW),
+    Math.floor(availH / gridH)
+  ));
+  const fontSize = Math.max(5, Math.round(cellSize * 0.38));
+
+  // Render pixel grid
+  let gridHtml = `<div class="pattern-grid" style="grid-template-columns:repeat(${gridW},${cellSize}px)">`;
+  for (let y = 0; y < gridH; y++) {
+    for (let x = 0; x < gridW; x++) {
+      const c = grid[y][x];
+      let bgColor, tc;
+      if (pixels && pixels[y] && pixels[y][x]) {
+        const p = pixels[y][x];
+        bgColor = `rgb(${Math.round(p.r)},${Math.round(p.g)},${Math.round(p.b)})`;
+        tc = textColorForRgb(p.r, p.g, p.b);
+      } else {
+        bgColor = c.hex;
+        tc = textColorFor(c.hex);
+      }
+      gridHtml += `<div class="pattern-cell" style="background:${bgColor};color:${tc};width:${cellSize}px;height:${cellSize}px;font-size:${fontSize}px" title="${c.name}(${c.code})">${c.code}</div>`;
     }
   }
-  if (!hasScore) { alert('请至少给一张图评分（0-10，0=最差，10=最好）'); return; }
-  // Keep last 50 scores
-  while (history.length > 50) history.shift();
-  saveScoringHistory(history);
-  alert('评分已保存！正在根据评分重新生成...');
-  // Re-generate with bias
-  if (currentImg) {
-    const loading = document.getElementById('loading');
-    const resultArea = document.getElementById('result-area');
-    loading.classList.remove('hidden');
-    resultArea.classList.add('hidden');
-    document.getElementById('loading-text').textContent = '根据评分优化生成中...';
-    setTimeout(() => {
-      currentVariants = generateVariants(currentImg, resizedGridW, resizedGridH);
-      resultArea.innerHTML = renderVariantGrid(currentVariants);
-      resultArea.classList.remove('hidden');
-      loading.classList.add('hidden');
-    }, 100);
+  gridHtml += '</div>';
+  gridContainer.innerHTML = gridHtml;
+
+  // Render color summary
+  let sumHtml = `<div class="color-summary"><h3 style="font-size:14px;margin-bottom:8px;">颜色用量（共 ${summary.reduce((s, c) => s + c.count, 0)} 颗）</h3><div class="color-list">`;
+  for (const c of summary) {
+    sumHtml += `<div class="color-item"><div class="color-swatch" style="background:${c.hex}"></div><div class="color-info"><div class="color-code">${c.code} ${c.name}</div><div class="color-count">${c.count} 颗</div></div></div>`;
   }
+  sumHtml += '</div></div>';
+  summaryContainer.innerHTML = sumHtml;
+
+  // Reset pinch-zoom state
+  resetPinchZoom();
+
+  modal.classList.remove('hidden');
+}
+
+function closePatternModal() {
+  document.getElementById('pattern-modal').classList.add('hidden');
+}
+
+// ========== Pinch-to-Zoom ==========
+let pinchState = { scale: 1, startScale: 1, startDist: 0, translateX: 0, translateY: 0, startX: 0, startY: 0, isPinching: false, isPanning: false, lastTouchX: 0, lastTouchY: 0 };
+
+function resetPinchZoom() {
+  pinchState = { scale: 1, startScale: 1, startDist: 0, translateX: 0, translateY: 0, startX: 0, startY: 0, isPinching: false, isPanning: false, lastTouchX: 0, lastTouchY: 0 };
+  const grid = document.querySelector('#pattern-modal-grid .pattern-grid');
+  if (grid) grid.style.transform = 'scale(1) translate(0px, 0px)';
+}
+
+function getTouchDist(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function initPinchZoom() {
+  const container = document.getElementById('pinch-zoom-container');
+
+  container.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      pinchState.isPinching = true;
+      pinchState.startDist = getTouchDist(e.touches);
+      pinchState.startScale = pinchState.scale;
+    } else if (e.touches.length === 1 && pinchState.scale > 1) {
+      pinchState.isPanning = true;
+      pinchState.lastTouchX = e.touches[0].clientX;
+      pinchState.lastTouchY = e.touches[0].clientY;
+      pinchState.startX = pinchState.translateX;
+      pinchState.startY = pinchState.translateY;
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchmove', (e) => {
+    const grid = document.querySelector('#pattern-modal-grid .pattern-grid');
+    if (!grid) return;
+
+    if (pinchState.isPinching && e.touches.length === 2) {
+      e.preventDefault();
+      const dist = getTouchDist(e.touches);
+      pinchState.scale = Math.max(0.5, Math.min(5, pinchState.startScale * (dist / pinchState.startDist)));
+      grid.style.transform = `scale(${pinchState.scale}) translate(${pinchState.translateX}px, ${pinchState.translateY}px)`;
+    } else if (pinchState.isPanning && e.touches.length === 1) {
+      e.preventDefault();
+      const dx = e.touches[0].clientX - pinchState.lastTouchX;
+      const dy = e.touches[0].clientY - pinchState.lastTouchY;
+      pinchState.translateX = pinchState.startX + dx / pinchState.scale;
+      pinchState.translateY = pinchState.startY + dy / pinchState.scale;
+      grid.style.transform = `scale(${pinchState.scale}) translate(${pinchState.translateX}px, ${pinchState.translateY}px)`;
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchend', (e) => {
+    if (e.touches.length < 2) pinchState.isPinching = false;
+    if (e.touches.length === 0) pinchState.isPanning = false;
+  });
+
+  // Mouse wheel zoom for desktop
+  container.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const grid = document.querySelector('#pattern-modal-grid .pattern-grid');
+    if (!grid) return;
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    pinchState.scale = Math.max(0.5, Math.min(5, pinchState.scale * delta));
+    grid.style.transform = `scale(${pinchState.scale}) translate(${pinchState.translateX}px, ${pinchState.translateY}px)`;
+  }, { passive: false });
 }
 
 // ========== Render Single Pattern ==========
@@ -726,7 +810,7 @@ function exportPattern() {
 
 // ========== Fly to History Animation ==========
 function flyToHistoryAnimation(thumbnailSrc) {
-  const saveBtn = document.querySelector('.result-actions .btn-primary');
+  const saveBtn = document.getElementById('pattern-modal-save') || document.querySelector('.result-actions .btn-primary');
   const historyTab = document.querySelector('[data-tab="tab-history"]');
   if (!saveBtn || !historyTab) return;
 
@@ -887,15 +971,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const previewArea = document.getElementById('preview-area');
   const previewImg = document.getElementById('preview-img');
   const resizeControls = document.getElementById('resize-controls');
-  const btnPreviewResize = document.getElementById('btn-preview-resize');
-  const resizePreview = document.getElementById('resize-preview');
-  const resizeCanvas = document.getElementById('resize-canvas');
-  const btnConfirmResize = document.getElementById('btn-confirm-resize');
   const loading = document.getElementById('loading');
-  const resultArea = document.getElementById('result-area');
   const maxEdgeInput = document.getElementById('max-edge');
   const rightEmptyState = document.getElementById('right-empty-state');
   const galleryFileInput = document.getElementById('gallery-file-input');
+  const variantStrip = document.getElementById('variant-strip');
+  const selectedVariantPreview = document.getElementById('selected-variant-preview');
 
   // Tab switching
   tabBtns.forEach(btn => {
@@ -931,16 +1012,16 @@ document.addEventListener('DOMContentLoaded', () => {
       previewImg.src = e.target.result;
       uploadPlaceholder.classList.add('hidden');
       previewArea.classList.remove('hidden');
-      // Show original dimensions
       const tmpImg = new Image();
       tmpImg.onload = () => {
         document.getElementById('original-info').textContent = `原图尺寸：${tmpImg.naturalWidth} × ${tmpImg.naturalHeight} 像素`;
       };
       tmpImg.src = e.target.result;
-      // Show resize controls
       resizeControls.classList.remove('hidden');
-      resizePreview.classList.add('hidden');
-      resultArea.classList.add('hidden');
+      variantStrip.classList.add('hidden');
+      variantStrip.innerHTML = '';
+      selectedVariantPreview.classList.add('hidden');
+      rightEmptyState.classList.remove('hidden');
       currentVariants = [];
       currentPattern = null;
       currentDirectPattern = null;
@@ -953,89 +1034,78 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('denoise-value').textContent = e.target.value;
   });
 
-  // Resize preview (with optional denoise + edge dilation)
-  btnPreviewResize.addEventListener('click', () => {
-    if (!previewImg.src) return;
+  // Generate button: merge compress preview + generate into one step
+  document.getElementById('btn-generate').addEventListener('click', () => {
+    if (!previewImg.src || !currentImageDataUrl) return;
     const maxEdge = parseInt(maxEdgeInput.value) || 58;
     const denoiseLevel = parseInt(document.getElementById('denoise-level').value) || 0;
     const denoiseIterations = Math.round(denoiseLevel / 10);
 
-    const tmpImg = new Image();
-    tmpImg.onload = () => {
-      const w = tmpImg.naturalWidth, h = tmpImg.naturalHeight;
-
-      // Step 1: Apply denoise if needed
-      let denoisedSource = tmpImg;
-      if (denoiseIterations > 0) {
-        const denoiseCanvas = document.createElement('canvas');
-        denoiseCanvas.width = w; denoiseCanvas.height = h;
-        const dCtx = denoiseCanvas.getContext('2d');
-        dCtx.drawImage(tmpImg, 0, 0);
-        for (let i = 0; i < denoiseIterations; i++) {
-          bilateralFilter(denoiseCanvas, 3, 3, 30);
-        }
-        denoisedSource = denoiseCanvas;
-      }
-
-      // Save denoised source (for all cards)
-      currentDenoisedDataUrl = (denoisedSource === tmpImg)
-        ? currentImageDataUrl
-        : denoisedSource.toDataURL('image/png');
-
-      const scale = maxEdge / Math.max(w, h);
-      resizedGridW = Math.round(w * scale);
-      resizedGridH = Math.round(h * scale);
-
-      // Step 2: Nearest-neighbor downsampling
-      resizeCanvas.width = resizedGridW;
-      resizeCanvas.height = resizedGridH;
-      const ctx = resizeCanvas.getContext('2d');
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(denoisedSource, 0, 0, resizedGridW, resizedGridH);
-
-      // Scale up for display
-      resizeCanvas.style.width = Math.min(300, resizedGridW * 4) + 'px';
-      const denoiseInfo = denoiseIterations > 0 ? `（平滑×${denoiseIterations}）` : '';
-      document.getElementById('resize-info').textContent =
-        `压缩后：${resizedGridW} × ${resizedGridH} 像素（共 ${resizedGridW * resizedGridH} 颗拼豆）${denoiseInfo}`;
-      resizePreview.classList.remove('hidden');
-      rightEmptyState.classList.add('hidden');
-    };
-    tmpImg.src = currentImageDataUrl;
-  });
-
-  // Confirm resize → directly generate
-  btnConfirmResize.addEventListener('click', () => {
-    if (!previewImg.src || resizedGridW === 0) return;
     loading.classList.remove('hidden');
-    resultArea.classList.add('hidden');
-    document.getElementById('loading-text').textContent =
-      `生成 ${resizedGridW}×${resizedGridH} 的10种方案中...`;
+    variantStrip.classList.add('hidden');
+    selectedVariantPreview.classList.add('hidden');
+    rightEmptyState.classList.add('hidden');
+    document.getElementById('loading-text').textContent = '正在生成图纸...';
+
     setTimeout(() => {
-      const img = new Image();
-      img.onload = () => {
-        currentImg = img;
-        // First card: denoise → compress → color match
-        currentDirectPattern = imageToDirectPattern(img, resizedGridW, resizedGridH);
-        // Cards 2-5: use original image (v1.1 behavior)
-        const origImg = new Image();
-        origImg.onload = () => {
-          currentVariants = generateVariants(origImg, resizedGridW, resizedGridH);
-          resultArea.innerHTML = renderVariantGrid(currentVariants);
-          resultArea.classList.remove('hidden');
-          loading.classList.add('hidden');
+      const tmpImg = new Image();
+      tmpImg.onload = () => {
+        const w = tmpImg.naturalWidth, h = tmpImg.naturalHeight;
+
+        // Step 1: Apply denoise if needed
+        let denoisedSource = tmpImg;
+        if (denoiseIterations > 0) {
+          const denoiseCanvas = document.createElement('canvas');
+          denoiseCanvas.width = w; denoiseCanvas.height = h;
+          const dCtx = denoiseCanvas.getContext('2d');
+          dCtx.drawImage(tmpImg, 0, 0);
+          for (let i = 0; i < denoiseIterations; i++) {
+            bilateralFilter(denoiseCanvas, 3, 3, 30);
+          }
+          denoisedSource = denoiseCanvas;
+        }
+
+        currentDenoisedDataUrl = (denoisedSource === tmpImg)
+          ? currentImageDataUrl
+          : denoisedSource.toDataURL('image/png');
+
+        const scale = maxEdge / Math.max(w, h);
+        resizedGridW = Math.round(w * scale);
+        resizedGridH = Math.round(h * scale);
+
+        // Step 2: Generate card 1 (direct pattern from denoised image)
+        const denoisedImg = new Image();
+        denoisedImg.onload = () => {
+          currentImg = denoisedImg;
+          currentDirectPattern = imageToDirectPattern(denoisedImg, resizedGridW, resizedGridH);
+
+          // Step 3: Generate cards 2-5 from original image
+          const origImg = new Image();
+          origImg.onload = () => {
+            document.getElementById('loading-text').textContent =
+              `生成 ${resizedGridW}×${resizedGridH} 的10种方案中...`;
+            currentVariants = generateVariants(origImg, resizedGridW, resizedGridH);
+            renderVariantStrip(currentVariants);
+            loading.classList.add('hidden');
+          };
+          origImg.src = currentImageDataUrl;
         };
-        origImg.src = currentImageDataUrl;
+        denoisedImg.src = currentDenoisedDataUrl;
       };
-      img.src = currentDenoisedDataUrl || currentImageDataUrl;
-    }, 100);
+      tmpImg.src = currentImageDataUrl;
+    }, 50);
   });
 
-  // Reupload — reset page only
+  // Click right-top preview to open pattern modal
+  selectedVariantPreview.addEventListener('click', () => {
+    openPatternModal();
+  });
+
+  // Clear button (formerly "重新上传")
   document.getElementById('btn-reupload').addEventListener('click', () => {
-    resultArea.classList.add('hidden');
-    resultArea.innerHTML = '';
-    resizePreview.classList.add('hidden');
+    variantStrip.classList.add('hidden');
+    variantStrip.innerHTML = '';
+    selectedVariantPreview.classList.add('hidden');
     rightEmptyState.classList.remove('hidden');
     resizeControls.classList.add('hidden');
     previewArea.classList.add('hidden');
@@ -1051,6 +1121,21 @@ document.addEventListener('DOMContentLoaded', () => {
     fileInput.value = '';
   });
 
+  // Pattern modal: close, save, export
+  document.getElementById('pattern-modal-close').addEventListener('click', closePatternModal);
+  document.getElementById('pattern-modal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closePatternModal();
+  });
+  document.getElementById('pattern-modal-save').addEventListener('click', () => {
+    saveToHistory();
+  });
+  document.getElementById('pattern-modal-export').addEventListener('click', () => {
+    exportPattern();
+  });
+
+  // Initialize pinch-to-zoom
+  initPinchZoom();
+
   // Gallery upload
   document.getElementById('btn-upload-work').addEventListener('click', () => galleryFileInput.click());
   galleryFileInput.addEventListener('change', (e) => {
@@ -1061,7 +1146,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Clear history
   document.getElementById('btn-clear-history').addEventListener('click', clearHistory);
 
-  // Modal close
+  // Modal close (for history/gallery)
   document.getElementById('modal-close').addEventListener('click', () => {
     document.getElementById('modal').classList.add('hidden');
   });
