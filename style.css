@@ -161,6 +161,23 @@ body {
 .controls-row label {
   font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px;
 }
+.toggle-label {
+  font-size: 13px; color: var(--text-secondary);
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+}
+.toggle-label input[type="checkbox"] {
+  width: 16px; height: 16px; accent-color: var(--primary);
+}
+.range-label {
+  font-size: 13px; color: var(--text-secondary);
+  display: flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+.input-range {
+  width: 80px; accent-color: var(--primary); cursor: pointer;
+}
+.range-label span {
+  min-width: 24px; text-align: center; font-weight: 600; color: var(--text); font-size: 13px;
+}
 
 /* Right panel: empty state */
 .right-empty-state {

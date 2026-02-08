@@ -75,9 +75,72 @@ function saveScoringHistory(list) { localStorage.setItem('perler_scoring', JSON.
 let currentPattern = null;
 let currentImageDataUrl = null;
 let currentVariants = [];
+let currentDirectPattern = null;
+let currentDenoisedDataUrl = null;
 let currentImg = null;
 let resizedGridW = 0;
 let resizedGridH = 0;
+
+// ========== Bilateral Filter (Denoise) ==========
+function bilateralFilter(canvas, radius, sigmaS, sigmaC) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  // For performance, work on a smaller version if image is large
+  const maxDim = 800;
+  let workCanvas = canvas, scale = 1;
+  if (Math.max(w, h) > maxDim) {
+    scale = maxDim / Math.max(w, h);
+    workCanvas = document.createElement('canvas');
+    workCanvas.width = Math.round(w * scale);
+    workCanvas.height = Math.round(h * scale);
+    const wCtx = workCanvas.getContext('2d');
+    wCtx.drawImage(canvas, 0, 0, workCanvas.width, workCanvas.height);
+  }
+
+  const ww = workCanvas.width, wh = workCanvas.height;
+  const wCtx = workCanvas.getContext('2d');
+  const imageData = wCtx.getImageData(0, 0, ww, wh);
+  const src = imageData.data;
+  const out = new Uint8ClampedArray(src.length);
+
+  const ss2 = 2 * sigmaS * sigmaS;
+  const sc2 = 2 * sigmaC * sigmaC;
+
+  for (let y = 0; y < wh; y++) {
+    for (let x = 0; x < ww; x++) {
+      const i = (y * ww + x) * 4;
+      let rSum = 0, gSum = 0, bSum = 0, wSum = 0;
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || nx >= ww || ny < 0 || ny >= wh) continue;
+          const ni = (ny * ww + nx) * 4;
+          const spatialW = Math.exp(-(dx * dx + dy * dy) / ss2);
+          const dr = src[i] - src[ni], dg = src[i+1] - src[ni+1], db = src[i+2] - src[ni+2];
+          const colorW = Math.exp(-(dr*dr + dg*dg + db*db) / sc2);
+          const weight = spatialW * colorW;
+          rSum += src[ni] * weight;
+          gSum += src[ni+1] * weight;
+          bSum += src[ni+2] * weight;
+          wSum += weight;
+        }
+      }
+      out[i] = rSum / wSum;
+      out[i+1] = gSum / wSum;
+      out[i+2] = bSum / wSum;
+      out[i+3] = src[i+3];
+    }
+  }
+
+  const outData = new ImageData(out, ww, wh);
+  if (scale < 1) {
+    // Write back to work canvas, then scale up to original
+    wCtx.putImageData(outData, 0, 0);
+    ctx.drawImage(workCanvas, 0, 0, w, h);
+  } else {
+    ctx.putImageData(outData, 0, 0);
+  }
+}
 
 // ========== Image Preprocessing ==========
 function preprocessImage(sourceCanvas, params) {
@@ -238,6 +301,35 @@ function imageToPattern(img, gridW, gridH, params) {
     .sort((a, b) => b.count - a.count);
 
   return { grid, pixels, summary, gridW, gridH, overallSimilarity, edgeOverlap, params };
+}
+
+// ========== Direct Pattern (denoise → compress → edge dilate → color match) ==========
+function imageToDirectPattern(img, gridW, gridH) {
+  // Step 1: 最近邻压缩
+  const canvas = document.createElement('canvas');
+  canvas.width = gridW; canvas.height = gridH;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, 0, 0, gridW, gridH);
+
+  // Step 2: 读取像素并匹配 MARD 色号
+  const raw = ctx.getImageData(0, 0, gridW, gridH).data;
+  const pixels = [], grid = [], colorCount = {};
+  for (let y = 0; y < gridH; y++) {
+    pixels[y] = []; grid[y] = [];
+    for (let x = 0; x < gridW; x++) {
+      const i = (y * gridW + x) * 4;
+      const r = raw[i], g = raw[i + 1], b = raw[i + 2];
+      pixels[y][x] = { r, g, b };
+      const color = findNearestColor(r, g, b);
+      grid[y][x] = color;
+      colorCount[color.code] = (colorCount[color.code] || 0) + 1;
+    }
+  }
+  const summary = Object.entries(colorCount)
+    .map(([code, count]) => ({ ...PERLER_COLORS.find(c => c.code === code), count }))
+    .sort((a, b) => b.count - a.count);
+  return { grid, pixels, summary, gridW, gridH };
 }
 
 // ========== Variant Generation ==========
@@ -401,20 +493,34 @@ function patternToThumbnail(pattern) {
 
 // ========== Render Variant Grid ==========
 function renderVariantGrid(variants) {
-  // Weighted score: 轮廓相似度 × 0.6 + 整体相似度 × 0.4, pick top 5
   const ranked = variants
     .map(v => ({ ...v, weightedScore: v.pattern.overallSimilarity * 0.55 + v.pattern.edgeOverlap * 0.45 }))
     .sort((a, b) => b.weightedScore - a.weightedScore)
-    .slice(0, 5);
+    .slice(0, 4);
 
-  let html = `<div class="preprocess-info">压缩后尺寸：${resizedGridW}×${resizedGridH} 像素，已从10种方案中选出最优5种。</div>`;
+  let html = `<div class="preprocess-info">压缩后尺寸：${resizedGridW}×${resizedGridH} 像素，已从10种方案中选出最优4种。</div>`;
   html += '<div class="variant-grid">';
+
+  // 第1张：压缩原图直接匹配
+  if (currentDirectPattern) {
+    const directThumb = patternToThumbnail(currentDirectPattern);
+    html += `<div class="variant-card" id="variant-direct">`;
+    html += `<div class="variant-img-wrap" onclick="selectVariant('direct')">`;
+    html += `<img src="${directThumb}" alt="原图对照">`;
+    html += `<div class="variant-overlay"><button class="variant-overlay-btn">就选这个</button></div>`;
+    html += `</div>`;
+    html += `<div class="variant-info">`;
+    html += `<div class="variant-metrics">`;
+    html += `<div class="variant-metric" style="flex:1">原图对照<strong>直接匹配</strong></div>`;
+    html += `</div>`;
+    html += `</div></div>`;
+  }
+
+  // 后4张：优化方案
   for (let rank = 0; rank < ranked.length; rank++) {
     const v = ranked[rank];
     const sim = v.pattern.overallSimilarity.toFixed(1);
     const edge = v.pattern.edgeOverlap.toFixed(1);
-    const score = v.weightedScore.toFixed(1);
-    const p = v.params;
     html += `<div class="variant-card" id="variant-${v.id}">`;
     html += `<div class="variant-img-wrap" onclick="selectVariant(${v.id})">`;
     html += `<img src="${v.thumbnail}" alt="方案${rank + 1}">`;
@@ -444,9 +550,18 @@ function viewVariant(id) {
 }
 
 function selectVariant(id) {
-  const v = currentVariants[id];
-  if (!v) return;
-  currentPattern = v.pattern;
+  let pattern, title;
+  if (id === 'direct') {
+    if (!currentDirectPattern) return;
+    pattern = currentDirectPattern;
+    title = '原图对照 - 直接匹配';
+  } else {
+    const v = currentVariants[id];
+    if (!v) return;
+    pattern = v.pattern;
+    title = `方案 #${id + 1} ${v.params.label || ''}`;
+  }
+  currentPattern = pattern;
   // Highlight selected card
   document.querySelectorAll('.variant-card').forEach(c => c.classList.remove('selected'));
   document.getElementById(`variant-${id}`).classList.add('selected');
@@ -454,10 +569,10 @@ function selectVariant(id) {
   const container = document.getElementById('selected-preview-area');
   let html = '<div class="selected-preview">';
   html += '<div class="selected-preview-header">';
-  html += `<h3>方案 #${id + 1} ${v.params.label || ''}</h3>`;
+  html += `<h3>${title}</h3>`;
   html += '<button class="selected-preview-close" onclick="closeSelectedPreview()">&times;</button>';
   html += '</div>';
-  html += renderPattern(v.pattern);
+  html += renderPattern(pattern);
   html += '</div>';
   container.innerHTML = html;
   container.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -819,34 +934,65 @@ document.addEventListener('DOMContentLoaded', () => {
       resultArea.classList.add('hidden');
       currentVariants = [];
       currentPattern = null;
+      currentDirectPattern = null;
     };
     reader.readAsDataURL(file);
   }
 
-  // Resize preview
+  // Denoise slider value display
+  document.getElementById('denoise-level').addEventListener('input', (e) => {
+    document.getElementById('denoise-value').textContent = e.target.value;
+  });
+
+  // Resize preview (with optional denoise + edge dilation)
   btnPreviewResize.addEventListener('click', () => {
     if (!previewImg.src) return;
     const maxEdge = parseInt(maxEdgeInput.value) || 58;
+    const denoiseLevel = parseInt(document.getElementById('denoise-level').value) || 0;
+    const denoiseIterations = Math.round(denoiseLevel / 10);
+
     const tmpImg = new Image();
     tmpImg.onload = () => {
       const w = tmpImg.naturalWidth, h = tmpImg.naturalHeight;
+
+      // Step 1: Apply denoise if needed
+      let denoisedSource = tmpImg;
+      if (denoiseIterations > 0) {
+        const denoiseCanvas = document.createElement('canvas');
+        denoiseCanvas.width = w; denoiseCanvas.height = h;
+        const dCtx = denoiseCanvas.getContext('2d');
+        dCtx.drawImage(tmpImg, 0, 0);
+        for (let i = 0; i < denoiseIterations; i++) {
+          bilateralFilter(denoiseCanvas, 3, 3, 30);
+        }
+        denoisedSource = denoiseCanvas;
+      }
+
+      // Save denoised source (for all cards)
+      currentDenoisedDataUrl = (denoisedSource === tmpImg)
+        ? currentImageDataUrl
+        : denoisedSource.toDataURL('image/png');
+
       const scale = maxEdge / Math.max(w, h);
       resizedGridW = Math.round(w * scale);
       resizedGridH = Math.round(h * scale);
-      // Draw pixelated preview
+
+      // Step 2: Nearest-neighbor downsampling
       resizeCanvas.width = resizedGridW;
       resizeCanvas.height = resizedGridH;
       const ctx = resizeCanvas.getContext('2d');
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(tmpImg, 0, 0, resizedGridW, resizedGridH);
+      ctx.drawImage(denoisedSource, 0, 0, resizedGridW, resizedGridH);
+
       // Scale up for display
       resizeCanvas.style.width = Math.min(300, resizedGridW * 4) + 'px';
+      const denoiseInfo = denoiseIterations > 0 ? `（平滑×${denoiseIterations}）` : '';
       document.getElementById('resize-info').textContent =
-        `压缩后：${resizedGridW} × ${resizedGridH} 像素（共 ${resizedGridW * resizedGridH} 颗拼豆）`;
+        `压缩后：${resizedGridW} × ${resizedGridH} 像素（共 ${resizedGridW * resizedGridH} 颗拼豆）${denoiseInfo}`;
       resizePreview.classList.remove('hidden');
       rightEmptyState.classList.add('hidden');
     };
-    tmpImg.src = previewImg.src;
+    tmpImg.src = currentImageDataUrl;
   });
 
   // Confirm resize → directly generate
@@ -860,12 +1006,19 @@ document.addEventListener('DOMContentLoaded', () => {
       const img = new Image();
       img.onload = () => {
         currentImg = img;
-        currentVariants = generateVariants(img, resizedGridW, resizedGridH);
-        resultArea.innerHTML = renderVariantGrid(currentVariants);
-        resultArea.classList.remove('hidden');
-        loading.classList.add('hidden');
+        // First card: denoise → compress → color match
+        currentDirectPattern = imageToDirectPattern(img, resizedGridW, resizedGridH);
+        // Cards 2-5: use original image (v1.1 behavior)
+        const origImg = new Image();
+        origImg.onload = () => {
+          currentVariants = generateVariants(origImg, resizedGridW, resizedGridH);
+          resultArea.innerHTML = renderVariantGrid(currentVariants);
+          resultArea.classList.remove('hidden');
+          loading.classList.add('hidden');
+        };
+        origImg.src = currentImageDataUrl;
       };
-      img.src = previewImg.src;
+      img.src = currentDenoisedDataUrl || currentImageDataUrl;
     }, 100);
   });
 
@@ -880,6 +1033,8 @@ document.addEventListener('DOMContentLoaded', () => {
     uploadPlaceholder.classList.remove('hidden');
     currentVariants = [];
     currentPattern = null;
+    currentDirectPattern = null;
+    currentDenoisedDataUrl = null;
     currentImg = null;
     currentImageDataUrl = null;
     resizedGridW = 0;
