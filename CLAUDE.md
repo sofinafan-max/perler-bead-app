@@ -13,6 +13,7 @@
 |------|-----|------|
 | v1.0 | `v1.0` | 初始版本 - MARD 221色版拼豆图纸生成器 |
 | v1.1 | `v1.1` | 效果图改用压缩原图像素色 + 保存历史飞行动画 |
+| v1.3 | `v1.3` | 原图对照卡片 + 平滑滑块 + 双边滤波降噪 |
 
 ## 文件结构
 ```
@@ -27,14 +28,17 @@ perler-colors.js  - MARD 221色色卡数据 + LAB 色彩空间匹配算法
 ### 图像处理流水线
 1. 上传图片 → `handleImageFile()`
 2. 压缩预览 → 按最长边像素数缩放（默认58），`imageSmoothingEnabled=false` 像素化
-3. 生成方案 → `generateVariants()` 生成10种参数组合，取 top 5 展示
-4. 每种方案 → `imageToPattern()`: 预处理(对比度/锐化) → 降采样 → Floyd-Steinberg 抖动 → LAB 色彩匹配
+3. 生成方案 → `generateVariants()` 生成10种参数组合，取 top 4 展示
+4. 第1张效果图 → `imageToDirectPattern()`: 降噪→压缩→直接MARD最近邻匹配（无抖动）
+5. 第2-5张效果图 → `imageToPattern()`: 使用原始图，预处理→降采样→Floyd-Steinberg抖动→LAB匹配
 
 ### 关键函数
 | 函数 | 文件 | 作用 |
 |------|------|------|
 | `downsampleImage()` | app.js | 图片降采样为像素网格，返回原始 RGB |
+| `imageToDirectPattern()` | app.js | 第1张效果图：降噪→压缩→直接MARD匹配（无抖动） |
 | `imageToPattern()` | app.js | 生成拼豆图纸，返回 `{grid, pixels, summary, ...}` |
+| `bilateralFilter()` | app.js | 双边滤波降噪（平滑滑块，0-100，每10=1次迭代） |
 | `patternToThumbnail()` | app.js | 生成缩略图（使用原始像素色，fallback 到匹配色） |
 | `renderPattern()` | app.js | 渲染详细图纸视图（原始像素色背景 + MARD 色号） |
 | `exportPattern()` | app.js | 导出 PNG（原始像素色背景 + 色号 + 颜色用量统计） |
@@ -52,6 +56,11 @@ perler-colors.js  - MARD 221色色卡数据 + LAB 色彩空间匹配算法
 - **效果图使用原始像素色**：所有缩略图和详细视图统一使用压缩后的原始像素色作为背景（而非拼豆匹配色），每个格子叠加 MARD 色号文字。这样效果图更接近原图视觉效果。
 - **历史记录不存 pixels**：`saveToHistory()` 时用解构去掉 pixels 字段，查看历史时 fallback 到 `grid[y][x].hex` 匹配色。
 - **飞行动画替代 alert**：保存到历史时，缩略图从"保存"按钮沿贝塞尔曲线飞向历史 tab，到达后 tab 按钮脉冲高亮。
+
+### v1.3 决策
+- **1+4 布局**：第1张为"原图对照"（降噪→压缩→直接匹配），后4张为优化方案（使用原始图，与 v1.1 生成逻辑一致）。
+- **平滑滑块**：取值 0-100，每 10 对应 1 次双边滤波迭代（0=不降噪，100=10次）。仅影响第1张效果图和压缩预览，不影响第2-5张。
+- **双图源分离**：`currentDenoisedDataUrl` 存降噪后的图（第1张用），`currentImageDataUrl` 存原图（第2-5张用），避免降噪影响优化方案的生成质量。
 
 ## 注意事项
 - 色卡为 MARD 品牌 221 色，色号格式为字母+数字（A1-M15），分8大系列
